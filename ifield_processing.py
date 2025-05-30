@@ -14,7 +14,7 @@ from object.iSurvey import iSurvey
 
 import collections.abc
 
-#hyper needs the four following aliases to be done manually.
+# hyper needs the four following aliases to be done manually.
 collections.Iterable = collections.abc.Iterable
 collections.Mapping = collections.abc.Mapping
 collections.MutableSet = collections.abc.MutableSet
@@ -24,11 +24,19 @@ project_name = "VNXXXXXXX_TEMPLATE"
 
 os.chdir("projects\\{}".format(project_name))
 
-#Load config
+def remove_files(extensions=list()):
+    for ext in extensions:
+        files = glob.glob(os.path.join("data", ext))
+        for f in files:
+            if os.path.isfile(f):
+                os.remove(f)
+                
+# Read the config file
 f = open('config.json', mode = 'r', encoding="utf-8")
 config = json.loads(f.read())
 f.close()
 
+# Check if the config file is valid
 try:
     isurveys = {}
 
@@ -52,7 +60,7 @@ try:
 
     main_protoid_final = int(config["main"]["protoid_final"])
 
-    #Read the xml file for the main section
+    # Read the xml file for the main section
     try:
         for proto_id, xml_file in tqdm(config["main"]["xmls"].items(), desc="Convet the xml file for the main section"):
             if os.path.exists(f'source\\xml\\{xml_file}'):
@@ -65,10 +73,10 @@ try:
     except Exception as ex:
         raise Exception(ex.args[0])
     
-    #Read the xml file for the placement + recall section
+    # Read the xml file for the placement + recall section
     follow_up_questions = dict()
 
-    #Create a dictionary to store the follow-up questions
+    # Create a dictionary to store the follow-up questions
     follow_up_globalization = dict()
 
     for stage_id, stage_obj in tqdm(config["stages"].items(), desc="Convet the xml file for the placement + recall section"):
@@ -89,7 +97,7 @@ try:
         
         if proto_id == stage_obj["protoid_final"]:
             for key, question in isurveys[int(proto_id)]["survey"]["questions"].items():
-                #if key not in isurveys[main_protoid_final]["survey"]["questions"].keys():
+                # if key not in isurveys[main_protoid_final]["survey"]["questions"].keys():
                 if key not in follow_up_questions.keys():
                     follow_up_questions[key] = dict()
                     follow_up_questions[key]["stages"] = list()
@@ -105,26 +113,14 @@ try:
                     follow_up_globalization[key] = dict()
                     follow_up_globalization[key] = translate
     
+    source_mdd_file = "..\\..\\template\\TemplateProject.mdd"
+    current_mdd_file = "data\\{}.mdd".format(config["project_name"])
+    source_dms_file = "..\\..\\dms\OutputDDFFile.dms"
+    
     if config["run_mdd_source"]:
-        #Create mdd/ddf file based on xmls file
-        source_mdd_file = "..\\..\\template\\TemplateProject.mdd"
-        current_mdd_file = "data\\{}.mdd".format(config["project_name"])
-        source_dms_file = "..\\..\\dms\OutputDDFFile.dms"
-
-        mdd_files = glob.glob(os.path.join("data", "*.mdd"))
-        ddf_files = glob.glob(os.path.join("data", "*.ddf"))
-        ivs_files = glob.glob(os.path.join("data", "*.ivs"))
-        xlsx_files = glob.glob(os.path.join("data", "*.xlsx"))
-
-        for f in mdd_files:
-            os.remove(f)
-        for f in ddf_files:
-            os.remove(f)
-        for f in ivs_files:
-            os.remove(f)
-        for f in xlsx_files:
-            os.remove(f)
-
+        # Remove all mdd/ddf files in the data folder
+        remove_files(extensions=["*.mdd", "*.ddf", "*.ivs", "*.xlsx"])
+                    
         if not os.path.exists(current_mdd_file):
             shutil.copy(source_mdd_file, current_mdd_file)
 
@@ -173,8 +169,16 @@ try:
 
                     if "comment_syntax" in question.keys():
                         mdd_source.addScript(f'{obj["question"]["attributes"]["objectName"]}{obj["question"]["comment"]["objectName"]}', obj["question"]["comment_syntax"], parent_nodes=parent_nodes, globalization=follow_up_globalization)
-
+    
         mdd_source.runDMS()
+    else: 
+        if config["run_mdd_export_source"]:
+            # Remove all mdd/ddf files in the data folder
+            remove_files(extensions=["*_EXPORT.mdd", "*_EXPORT.ddf", "*_EXPORT.ivs", "*_CE.mdd", "*_CE.ddf", "*_CE.ivs", "*_OE.mdd", "*_OE.ddf", "*_OE.ivs", "*.xlsx"])
+            
+            mdd_source = Metadata(mdd_file=current_mdd_file, dms_file=source_dms_file, default_language=config["source_initialization"]["default_language"])
+
+            mdd_source.runDMS()
 
     ###################################################################################
     current_mdd_file = "data\\{}_EXPORT.mdd".format(config["project_name"])
@@ -457,19 +461,7 @@ try:
     ###################################################################################
     try:
         if config["processing_data"]["run_ce_source"]:
-            mdd_files = glob.glob(os.path.join("data", "*_CE*.mdd"))
-            ddf_files = glob.glob(os.path.join("data", "*_CE*.ddf"))
-            ivs_files = glob.glob(os.path.join("data", "*_CE*.ivs"))
-            xlsx_files = glob.glob(os.path.join("data", "*_CE*.xlsx"))
-
-            for f in mdd_files:
-                os.remove(f)
-            for f in ddf_files:
-                os.remove(f)
-            for f in ivs_files:
-                os.remove(f)
-            for f in xlsx_files:
-                os.remove(f)
+            remove_files(extensions=["*_CE.mdd", "*_CE.ddf", "*_CE.ivs", "*_OE.mdd", "*_OE.ddf", "*_OE.ivs"])
 
             current_mdd_file = "data\\{}_EXPORT.mdd".format(config["project_name"])
             current_ddf_file = "data\\{}_EXPORT.ddf".format(config["project_name"])
@@ -490,19 +482,8 @@ try:
     ###################################################################################
     try:
         if config["processing_data"]["run_oe_source"]:
-            mdd_files = glob.glob(os.path.join("data", "*_OE*.mdd"))
-            ddf_files = glob.glob(os.path.join("data", "*_OE*.ddf"))
-            ivs_files = glob.glob(os.path.join("data", "*_OE*.ivs"))
-            xlsx_files = glob.glob(os.path.join("data", "*_OE*.xlsx"))
-
-            for f in mdd_files:
-                os.remove(f)
-            for f in ddf_files:
-                os.remove(f)
-            for f in ivs_files:
-                os.remove(f)
-            for f in xlsx_files:
-                os.remove(f)
+            # Remove all mdd/ddf files in the data folder
+            remove_files(extensions=["*_OE.mdd", "*_OE.ddf", "*_OE.ivs"])
 
             current_mdd_file = "data\\{}_CE.mdd".format(config["project_name"])
             current_ddf_file = "data\\{}_CE.ddf".format(config["project_name"])

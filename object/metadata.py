@@ -140,7 +140,7 @@ class Metadata(mrDataFileDsc):
         try:
             self.openMDM()
 
-            if question_name in ['S8']:
+            if question_name in ['_LIST_TOUCHPOINT_QV1a']:
                 a = ""
 
             if is_defined_list:
@@ -149,7 +149,7 @@ class Metadata(mrDataFileDsc):
                 self.handle_nested_fields(question_name, syntax, field_parent, parent_nodes)
             
             if globalization is not None:
-                if len(globalization.languages) > 1:
+                if len([l for l in ['vi','en'] if l in globalization.languages]) >= 1:
                     self.translate(question_name, is_defined_list=is_defined_list, parent_nodes=parent_nodes, globalization=globalization)
 
         except Exception as ex:
@@ -159,37 +159,52 @@ class Metadata(mrDataFileDsc):
             self.closeMDM()
     
     def handle_translate_defined_list(self, question_name, globalization=dict()):
-        self.MDM.Types[question_name].Labels.Text = globalization[question_name]['en']
+        current_language = 'en'
+
+        if len(globalization.languages) == 1:
+            current_language = 'vi'
+
+        if question_name in globalization.keys():
+            self.MDM.Types[question_name].Labels.Text = globalization[question_name][current_language]
 
         for element in self.MDM.Types[question_name].Elements:
             if f"{question_name}.{element.Name}" in globalization.keys():
-                element.Labels.Text = globalization[f"{question_name}.{element.Name}"]['en']
+                element.Labels.Text = globalization[f"{question_name}.{element.Name}"][current_language]
 
     def handle_translate_question(self, field, globalization=dict()):
-        
+        current_language = 'en'
+
+        if len(globalization.languages) == 1:
+            current_language = 'vi'
+
         question_fullname = re.sub(pattern='\.\.', repl='', string=field.FullName)
+
+        if question_fullname in ['P_NAT_2']:
+            a = ""
 
         match str(field.ObjectTypeValue):
             case objectTypeConstants.mtVariable.value:
-                if field.DataType == dataTypeConstants.mtCategorical.value:    
-                    field.Labels.Text = globalization[question_fullname]['en']
+                if field.DataType == dataTypeConstants.mtCategorical.value:
+                    if question_fullname in globalization.keys():    
+                        field.Labels.Text = globalization[question_fullname][current_language]
 
                     for category in field.Categories:
                         if f"{question_fullname}.{category.Name}" in globalization.keys():
-                            category.Labels.Text = globalization[f"{question_fullname}.{category.Name}"]['en']
+                            category.Labels.Text = globalization[f"{question_fullname}.{category.Name}"][current_language]
 
                 else:
-                    field.Labels.Text = globalization[question_fullname]['en']
+                    if question_fullname in globalization.keys():
+                        field.Labels.Text = globalization[question_fullname][current_language]
             case objectTypeConstants.mtClass.value: #Block Fields
                 if question_fullname in globalization.keys():  
-                    field.Labels.Text = globalization[question_fullname]['en']
+                    field.Labels.Text = globalization[question_fullname][current_language]
             case objectTypeConstants.mtArray.value: #Loop
                 if question_fullname in globalization.keys():  
-                    field.Labels.Text = globalization[question_fullname]['en']
+                    field.Labels.Text = globalization[question_fullname][current_language]
 
                 for category in field.Categories:
                     if f"{field.Name}.{category.Name}" in globalization.keys():
-                        category.Labels.Text = globalization[f"{field.Name}.{category.Name}"]['en']
+                        category.Labels.Text = globalization[f"{field.Name}.{category.Name}"][current_language]
 
     def translate(self, question_name, is_defined_list=False, parent_nodes=list(), globalization=dict()):
         try:

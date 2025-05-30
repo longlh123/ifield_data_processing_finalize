@@ -152,7 +152,7 @@ class iQuestion(dict):
         self.generate(question, answersref, definesref, parent_nodes=parent_nodes)
     
     def generate(self, question, answersref, definesref, parent_nodes=None):
-        if question.attrib['pos'] == "100":
+        if question.attrib['pos'] == "79":
             a = ""
 
         self["text"] = self.get_text(question, parent_nodes=parent_nodes)  
@@ -584,7 +584,8 @@ class iAnswers(dict):
                         if option_child["is_sublist"]:
                             sub_child_list =[]
 
-                            s_child += ("" if len(s_child) == 0 else ",") + option_child["syntax"]
+                            # s_child += ("" if len(s_child) == 0 else ",") + option_child["syntax"]
+                            s_child = option_child["syntax"]
                             g_child_pos = g_pos + 1
                             
                             s_child_child = ""
