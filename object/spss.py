@@ -5,9 +5,10 @@ import savReaderWriter
 import pandas as pd
 import numpy as np
 import re
+from tqdm import tqdm
 
-class SPSSObject_Dataframe(mrDataFileDsc):
-    def __init__(self, mdd_path, ddf_path, sql_query, questions, groups=list()):
+class SPSSObject(mrDataFileDsc):
+    def __init__(self, mdd_path, ddf_path, sql_query, questions, group_name=None):
         mrDataFileDsc.__init__(self, mdd_file=mdd_path, ddf_file=ddf_path, sql_query=sql_query)
 
         self.df = pd.DataFrame()
@@ -25,57 +26,36 @@ class SPSSObject_Dataframe(mrDataFileDsc):
         self.var_dates = list()
 
         #Group of columns with format A_suffix1, A_suffix2...B_suffix1, B_suffix2
-        self.groups = groups
-        #Columns to use as id variable
-        self.id_vars = list()
-        self.value_groupnames = list()
-        self.groupname_labels = list()
-
+        self.group_name = group_name
+        
         self.init(questions)
 
     def init(self, questions):
         self.openMDM()
         self.openDataSource()
         
-        if len(self.groups) > 0:
-            field = self.get_nested_field(self.groups)
-            #self.value_groupnames.extend(self.getValueLabels(self.MDM.Fields[self.group_name]).keys())
-
         data = self.adoRS.GetRows()
 
         columns = [f.Name for f in self.adoRS.Fields]
         
         self.df = pd.DataFrame(data=np.array(data).T, columns=columns)
-
         self.transform(questions)
 
         self.closeMDM()
         self.closeDataSource()
 
-    def get_nested_field(self, groups=list(), parent_field=None):
-        if len(groups) == 1:
-            return self.MDM.Fields[groups[0]] if parent_field is None else parent_field.Fields[groups[0]]
-        else:
-            return self.get_nested_field(groups[1:], self.MDM.Fields[groups[0]] if parent_field is None else parent_field.Fields[groups[0]])
-
-    def get_columns(self, questions):
-        columns = list()
-
-        for question in questions:
-            field = self.MDM.Fields[question]
-
-            if field.Properties["py_isHidden"] is None or field.Properties["py_isHidden"] == False:
-                columns.extend([variable.FullName for variable in field.Variables])
-
-        return columns
-
     def transform(self, questions):
         
-        for question in questions:
-            field = self.MDM.Fields[question]
+        if len(questions) == 0:
+            for field in self.MDM.Fields:
+                if field.Properties["py_isHidden"] is None or field.Properties["py_isHidden"] == False:
+                    self.generate_variable(field)
+        else:
+            for question in tqdm(questions, desc=f"Tranfrom data..") :
+                field = self.MDM.Fields[question]
 
-            if field.Properties["py_isHidden"] is None or field.Properties["py_isHidden"] == False:
-                self.generate_variable(field)
+                if field.Properties["py_isHidden"] is None or field.Properties["py_isHidden"] == False:
+                    self.generate_variable(field)
 
     def get_iterations(self, field, indexes):
         indexes = indexes.split(',')
@@ -85,6 +65,9 @@ class SPSSObject_Dataframe(mrDataFileDsc):
             if index < 0:
                 return
             
+            if len(indexes[index]) == 0:
+                return
+
             iterations.append(f.Categories[re.sub(pattern="[\{\}]", repl="", string=indexes[index])])
             findIteration(f.Parent.Parent, index - 1)
 
@@ -104,7 +87,11 @@ class SPSSObject_Dataframe(mrDataFileDsc):
                 self.transform_simple_data(field, iterations=iterations)
             elif field.DataType == dataTypeConstants.mtCategorical.value:
                 self.transform_categorical_data(field, iterations=iterations)
-        else:
+        elif str(field.ObjectTypeValue) == objectTypeConstants.mtClass.value:
+            for f in field.Fields:
+                if f.Properties["py_isHidden"] is None or f.Properties["py_isHidden"] == False:
+                    self.generate_variable(f)
+        elif str(field.ObjectTypeValue) == objectTypeConstants.mtArray.value:
             iterations_list = list()
 
             if field.Properties["py_setCategoriesList"]:
@@ -116,8 +103,8 @@ class SPSSObject_Dataframe(mrDataFileDsc):
                 if f.Properties["py_isHidden"] is None or f.Properties["py_isHidden"] == False:
                     full_name = f.FullName.replace("..","%s") % tuple(field.CurrentIndexPath.split(','))
                     for iteration in iterations_list:
-                        iteration_full_name = full_name.replace("..", "{%s}" % iteration)
-                        self.generate_variable(self.MDM.Fields[iteration_full_name], iterations=field.Categories[iteration])
+                        iteration_full_name = full_name.replace("[..]", "[{%s}]" % iteration)
+                        self.generate_variable(self.MDM.Fields[iteration_full_name], iterations=[field.Categories[iteration]])
                     
     def transform_simple_data(self, field, iterations=list()):
         var_name = self.get_variable_name(field, iterations=iterations)
@@ -127,21 +114,30 @@ class SPSSObject_Dataframe(mrDataFileDsc):
         self.varLabels[var_name] = var_label.encode('utf-8')
         self.varTypes[var_name] = self.get_datatype(field)
         self.measureLevels[var_name] = self.get_measure_level(field)
+        
+        if self.varTypes[var_name] > 0:
+            self.varMissingValues[var_name] = {"values": [''] if self.varTypes[var_name] > 0 else [None]}
 
         if field.LevelDepth == 1:
             self.df_spss[var_name] = self.df[field.FullName]
         else:
-            self.df_spss[var_name] = self.df[field.FullName.replace("..", field.CurrentIndexPath)]
+            self.df_spss[var_name] = self.df[field.FullName.replace("..", "%s") % tuple(field.CurrentIndexPath.split(","))]
     
+    def get_parent_node(self, field):
+            if field.LevelDepth == 1:
+                return field
+            else:
+                return self.get_parent_node(field.Parent)
+            
     def transform_categorical_data(self, field, iterations=list()):
-        var_name = self.get_variable_name(field, iterations=iterations)
+        var_name = field.Name if field.Properties["py_setColumnName"] is None else field.Properties["py_setColumnName"]
         var_label = self.replaceLabel(self.get_variable_label(field, iterations=iterations))
 
         value_labels = self.get_categories_list(field, show_punching_data=field.Properties["py_showPunchingData"])
         
         categories_list = list()
         remaining_categories_list = list()
-        other_categories_list = list()
+        # other_categories_list = list()
 
         if field.Properties["py_setCategoriesList"]:
             categories_list = field.Properties["py_setCategoriesList"].split(',')
@@ -150,26 +146,27 @@ class SPSSObject_Dataframe(mrDataFileDsc):
 
         remaining_categories_list = [cat.Name for cat in field.Categories if cat.Name not in categories_list and not cat.IsOtherLocal]
         
-        try:
-            if field.OtherCategories.Count > 0:
-                other_categories_list = [cat.Name for cat in field.OtherCategories]
-        except AttributeError as e:
-            pass
-
+        # try:
+        #     if field.OtherCategories.Count > 0:
+        #         other_categories_list = [cat.Name for cat in field.OtherCategories]
+        # except AttributeError as e:
+        #     pass
+        
         if field.Properties["py_showPunchingData"]:
             var_fullname = field.FullName if len(iterations) == 0 else field.FullName.replace("..", "%s") % tuple(field.CurrentIndexPath.split(","))
 
             df_updated = self.df[var_fullname].replace(to_replace="[\{\}]", value="", regex=True)
 
+            self.df_spss = pd.concat([self.df_spss, df_updated], ignore_index=False, axis=1)
+            
+            attr_name = re.sub(pattern="_", repl="_R", string=re.sub(pattern=",", repl="", string=re.sub(pattern="[\{\}]",repl='',string=field.CurrentIndexPath)))
+            
             for cat_name in categories_list:
                 category = field.Categories[cat_name]
                 
-                attr_name = re.search(pattern="_\d+$", string=var_name)[0]
-                q_name = var_name.replace(attr_name, "")
+                category_name = re.sub(pattern="^_", repl="", string=category.Name)
 
-                var_name_temp = "{}_C{}{}".format(q_name, re.sub(pattern="^_", repl="", string=category.Name), attr_name)
-
-                #var_name_temp = "{}_C{}".format(var_name, re.sub(pattern="^_", repl="", string=category.Name))
+                var_name_temp = "{}_C{}{}".format(var_name, category_name, attr_name)
 
                 self.varNames.append(var_name_temp)
                 self.varLabels[var_name_temp] = "{}_{}".format(var_label, category.Label).encode('utf-8')     
@@ -177,18 +174,14 @@ class SPSSObject_Dataframe(mrDataFileDsc):
                 self.measureLevels[var_name_temp] = self.get_measure_level(field)
                 self.valueLabels[var_name_temp] = value_labels
                 
-                self.df_spss = pd.concat([self.df_spss, df_updated], ignore_index=False, axis=1)
-                
                 match field.Properties["py_setVariableValues"]:
-                    case "Values":
-                        self.df_spss[var_name_temp] = self.df_spss[df_updated.name].apply(lambda x: None if x is None else 1 if category.Name.lower() in x.split(',') else 0)
                     case "Labels":
                         self.df_spss[var_name_temp] = self.df_spss[df_updated.name].apply(lambda x: None if x is None else "Yes" if category.Name.lower() in x.split(',') else "No")
-
-                self.df_spss.drop(columns=[df_updated.name], inplace=True)
-
+                    case _:
+                        self.df_spss[var_name_temp] = self.df_spss[df_updated.name].apply(lambda x: None if x is None else 1 if category.Name.lower() in x.split(',') else 0)
+            
             if len(remaining_categories_list) > 0:
-                var_name_temp = "{}_C{}".format(var_name, re.sub(pattern="^_", repl="", string='_97'))
+                var_name_temp = "{}_C97".format(var_name)
 
                 self.varNames.append(var_name_temp)
                 self.varLabels[var_name_temp] = "{}_{}".format(var_label, category.Label).encode('utf-8')     
@@ -199,7 +192,7 @@ class SPSSObject_Dataframe(mrDataFileDsc):
                 self.df_spss = pd.concat([self.df_spss, df_updated], ignore_index=False, axis=1)
                 
                 match field.Properties["py_setVariableValues"]:
-                    case "Values":
+                    case "Names":
                         self.df_spss[var_name_temp] = self.df_spss[df_updated.name].apply(lambda x: None if x is None else 1 if any([y in remaining_categories_list for y in x.split(',')]) else 0)
                     case "Labels":
                         self.df_spss[var_name_temp] = self.df_spss[df_updated.name].apply(lambda x: None if x is None else "Yes" if any([y in remaining_categories_list for y in x.split(',')]) else "No")
@@ -209,26 +202,38 @@ class SPSSObject_Dataframe(mrDataFileDsc):
             if field.Properties["py_showHelperFields"]:
                 if field.HelperFields.Count > 0:
                     df_others = pd.DataFrame()
-                    df_others["Other"] = self.df[[helperfield.FullName for helperfield in field.HelperFields]].fillna('').sum(1).replace('', np.nan)
+                    df_others["Other"] = self.df[[helperfield.FullName if len(iterations) == 0 else helperfield.FullName.replace("..", "%s") % tuple(field.CurrentIndexPath.split(",")) for helperfield in field.HelperFields]].fillna('').sum(1).replace('', np.nan)
                     
                     if field.Properties["py_combibeHelperFields"]:
-                        var_name_temp = "{}_C{}".format(var_name, re.sub(pattern="^_", repl="", string='_997'))
-                        
+                        if field.LevelDepth == 1:
+                            var_name_temp = "{}".format(var_name)
+                        else:
+                            var_name_temp = "{}{}".format(var_name, attr_name)
+
+                        var_name_temp = "{}_C997".format(var_name_temp)              
+
                         self.varNames.append(var_name_temp)
-                        self.varLabels[var_name_temp] = "{}_{}".format(var_label, category.Label).encode('utf-8')     
+                        self.varLabels[var_name_temp] = "{}_{}".format(var_label, "Other").encode('utf-8')     
                         self.varTypes[var_name_temp] = self.get_datatype(field)
                         self.measureLevels[var_name_temp] = self.get_measure_level(field)
                         self.valueLabels[var_name_temp] = value_labels
-
+                
                         self.df_spss[var_name_temp] = df_others["Other"].apply(lambda x: 0 if pd.isna(x) else 1)
+                        self.df_spss.loc[self.df_spss[df_updated.name].isnull(), var_name_temp] = None
 
-                        var_name_temp = "{}_{}_Verbatim".format(var_name, re.sub(pattern="^_", repl="", string='_997'))
+                        if field.LevelDepth == 1:
+                            var_name_temp = "{}".format(var_name)
+                        else:
+                            var_name_temp = "{}{}".format(var_name, attr_name)
+
+                        var_name_temp = "{}_C997_Verbatim".format(var_name_temp)
+
                         self.varNames.append(var_name_temp)
                         self.varLabels[var_name_temp] = var_label.encode('utf-8')
-                        self.varTypes[var_name_temp] = self.get_datatype(field.HelperFields[0])
+                        self.varTypes[var_name_temp] = self.get_datatype(field.HelperFields[0], parent=field)
 
                         if self.varTypes[var_name_temp] == 0:
-                            self.varMissingValues[var_name_temp] = {"values": [999, -1, -2]}
+                            self.varMissingValues[var_name_temp] = {"values": [''] if self.varTypes[var_name_temp] > 0 else [None]}
 
                         self.measureLevels[var_name_temp] = self.get_measure_level(field.HelperFields[0])
 
@@ -241,16 +246,20 @@ class SPSSObject_Dataframe(mrDataFileDsc):
                             self.varTypes[var_name_temp] = self.get_datatype(field)
                             self.measureLevels[var_name_temp] = self.get_measure_level(field)
                             self.valueLabels[var_name_temp] = value_labels
-
-                            self.df_spss[var_name_temp] = self.df[helperfield.FullName].apply(lambda x: 0 if pd.isna(x) else 1)
+                            
+                            self.df_spss[var_name_temp] = self.df[helperfield.FullName if len(iterations) == 0 else helperfield.FullName.replace("..","%s") % tuple(field.CurrentIndexPath.split(','))].apply(lambda x: 0 if pd.isna(x) else 1)
+                            self.df_spss.loc[self.df_spss[df_updated.name].isnull(), var_name_temp] = None
 
                             var_name_temp = "{}_C{}_Verbatim".format(var_name, re.sub(pattern="^_", repl="", string=helperfield.Name))
                             self.varNames.append(var_name_temp)
                             self.varLabels[var_name_temp] = var_label.encode('utf-8')
-                            self.varTypes[var_name_temp] = self.get_datatype(helperfield)
+                            self.varTypes[var_name_temp] = self.get_datatype(helperfield, parent=field)
                             self.measureLevels[var_name_temp] = self.get_measure_level(helperfield)
 
-                            self.df_spss[var_name_temp] = self.df[helperfield.FullName].apply(lambda x: '' if pd.isna(x) else x)
+                            self.df_spss[var_name_temp] = self.df[helperfield.FullName if len(iterations) == 0 else helperfield.FullName.replace("..","%s") % tuple(field.CurrentIndexPath.split(','))].apply(lambda x: '' if pd.isna(x) else x)
+        
+            self.df_spss.drop(columns=[df_updated.name], inplace=True)
+        
         elif field.Properties["py_showVariableNames"] and field.Properties["py_showVariableLabels"]:
             replaced_categories_list = {}
             replaced_values_list = {}
@@ -281,29 +290,30 @@ class SPSSObject_Dataframe(mrDataFileDsc):
                 
                 self.df_spss[f"{var_name}_Label"] = self.df[var_fullname].apply(lambda x: np.nan if x is None else ';'.join(map(replaced_categories_list.get, x[1:len(x)-1].split(','))))
         else:
-            replaced_categories_list = {}
-
-            for cat in field.Categories:
-                cat_name = cat.Name[1:len(cat.Name)] if cat.Name[0:1] in ["_"] else cat.Name
-
-                match field.Properties["py_setVariableValues"]:
-                    case "Values":
-                        replaced_cat_name = int(cat_name if cat_name.isnumeric() else field.Categories[cat.Name].Properties["value"])
-                        replaced_categories_list[cat_name.lower()] = replaced_cat_name
-                    case "Labels":
-                        replaced_categories_list[cat_name.lower()] = cat.Label
+            replaced_categories_list = self.get_replaced_categories_list(field)
             
             var_fullname = field.FullName if len(iterations) == 0 else field.FullName.replace("..", "%s") % tuple(field.CurrentIndexPath.split(","))
 
+            attr_name = re.sub(pattern="^_", repl="", string=re.sub(pattern="[\{\},]",repl='',string=field.CurrentIndexPath)) 
+
             df_updated = self.df[var_fullname].replace(to_replace="[\{\}]", value="", regex=True)
             df_updated = df_updated.str.split(',', expand=True)
-            df_updated = df_updated[list(df_updated.columns)].replace(to_replace="^_", value="", regex=True)
+            # df_updated = df_updated[list(df_updated.columns)].replace(to_replace="^_", value="", regex=True)
 
             column_renamed = dict()
 
             for i in list(df_updated.columns):
-                var_name_temp = var_name if field.MinValue == 1 and field.MaxValue == 1 else "{}_{}".format(var_name, i + 1)
-                var_name_temp = re.sub(pattern="^_", repl="", string=var_name_temp)
+                if field.LevelDepth == 1:
+                    if field.MinValue == 1 and field.MaxValue == 1:
+                        var_name_temp = "{}".format(var_name)
+                    else: 
+                        var_name_temp = "{}_{}".format(var_name, i + 1)
+                else:
+                    if field.MinValue == 1 and field.MaxValue == 1:
+                        var_name_temp = "{}_R{}".format(var_name, attr_name)
+                    else: 
+                        var_name_temp = "{}_{}_R{}".format(var_name, i + 1, attr_name)
+
                 self.varNames.append(var_name_temp)
                 self.varLabels[var_name_temp] = var_label.encode('utf-8')
                 self.varTypes[var_name_temp] = self.get_datatype(field)
@@ -340,6 +350,28 @@ class SPSSObject_Dataframe(mrDataFileDsc):
 
                             self.df_spss[var_name_temp] = self.df[helperfield.FullName]
 
+    def get_replaced_categories_list(self, field):
+        replaced_categories_list = dict()
+
+        index = 1
+
+        for cat in field.Categories:
+            cat_value = str(field.Categories[cat.Name].Properties["value"])
+
+            if cat_value.isnumeric():
+                cat_value = int(cat_value)
+            else:
+                if re.match(pattern='^\D\d+', string=cat_value):
+                    cat_value = int(cat_value[1:len(cat_value)])
+                else:
+                    cat_value = index
+                    
+            replaced_categories_list[cat.Name.lower()] = cat_value
+            
+            index = index + 1
+        
+        return replaced_categories_list
+    
     def get_categories_list(self, field, show_punching_data=False):
         categories_list = dict()
 
@@ -347,13 +379,22 @@ class SPSSObject_Dataframe(mrDataFileDsc):
             categories_list[0] = "No".encode('utf-8')
             categories_list[1] = "Yes".encode('utf-8')            
         else: 
-            for cat in field.Categories:
-                if not cat.IsOtherLocal:
-                    cat_name = cat.Name[1:len(cat.Name)] if cat.Name[0:1] in ["_"] else cat.Name
-                    cat_name = int(cat_name if cat_name.isnumeric() else field.Categories[cat.Name].Properties["value"])
+            index = 1
 
-                    #cat_name = int(cat.Name[1:len(cat.Name)] if cat.Name[0:1] in ["_"] else cat.Name)
-                    categories_list[cat_name] = cat.Label.encode('utf-8')
+            for cat in field.Categories:
+                cat_value = str(field.Categories[cat.Name].Properties["value"])
+
+                if cat_value.isnumeric():
+                    cat_value = int(cat_value)
+                else:
+                    if re.match(pattern='^\D\d+', string=cat_value):
+                        cat_value = int(cat_value[1:len(cat_value)])
+                    else:
+                        cat_value = index
+                        
+                categories_list[cat_value] = cat.Label.encode('utf-8')
+                
+                index = index + 1
         
         return categories_list
 
@@ -366,21 +407,26 @@ class SPSSObject_Dataframe(mrDataFileDsc):
             case _:
                 return "nominal"
             
-    def get_datatype(self, field):
+    def get_datatype(self, field, parent = None):
         match field.DataType:
             case dataTypeConstants.mtLong.value | dataTypeConstants.mtDouble.value:
                 return 0
             case dataTypeConstants.mtText.value:
                 if field.LevelDepth == 1:
-                    return int(self.df[field.FullName].str.encode('utf-8').replace(r'\xcd',r'\xcc\xa6').str.decode('utf-8').str.len().max())
+                    max_len = self.df[field.FullName].str.encode('utf-8').replace(r'\xcd',r'\xcc\xa6').str.decode('utf-8').str.len().max()
                 else:
-                    return int(self.df[field.FullName.replace("..", field.CurrentIndexPath)].fillna("").str.len().max())
+                    if field.UsageTypeName == 'OtherSpecify':
+                        max_len = self.df[field.FullName.replace("..", "%s") % tuple(parent.CurrentIndexPath.split(","))].fillna("").str.len().max()
+                    else:
+                        max_len = self.df[field.FullName.replace("..", "%s") % tuple(field.CurrentIndexPath.split(","))].fillna("").str.len().max()
+                
+                return 1024 if pd.isnull(max_len) else int(max_len)
             case dataTypeConstants.mtDate.value:
                 return 0
             case _:
                 return 0
 
-    def get_iteration_name(self, iterations=list()):
+    def get_iteration_name1(self, iterations=list()):
         labels = list()
 
         def get_label(index):
@@ -395,7 +441,20 @@ class SPSSObject_Dataframe(mrDataFileDsc):
         ls = labels[1:len(labels)]
         ls.append(labels[0])
         return "_".join([l if l[0:1] not in ["_"] else l[1:len(l)] for l in ls])
-          
+    
+    def get_iteration_name(self, iterations=None):
+        if iterations is None:
+            iterations = []
+        
+        labels = []
+
+        if len(iterations) == 1:
+            labels.append(iterations[0].Name)
+        elif len(iterations) > 1:
+            labels.extend(self.get_iteration_name1(iterations=iterations))  # Ensure this returns a list
+
+        return labels
+    
     def get_variable_name(self, field, iterations=list()):
         if len(iterations) == 0:
             var_name = field.FullName if field.Properties["py_setColumnName"] is None else field.Properties["py_setColumnName"]
@@ -403,14 +462,7 @@ class SPSSObject_Dataframe(mrDataFileDsc):
             if field.Properties["py_setColumnName"] is None:
                 var_name = field.FullName.replace("..","%s") % tuple(field.CurrentIndexPath.split(','))
             else:
-                var_name = field.Properties["py_setColumnName"] % tuple(re.sub(pattern="[\{\}]",repl='',string=field.CurrentIndexPath).split(','))
-            
-            #var_name = "{}_{}".format(var_name, self.get_iteration_name(iterations))
-
-        #var_name = var_name if var_name[0:1] not in ["_"] else var_name[1:len(var_name)]
-        
-        #if field.UsageType == categoryUsageConstants.vtVariable.value:
-        #    var_name = var_name.replace(".", "_")
+                var_name = "%s%s" % (field.Properties["py_setColumnName"], "".join(self.get_iteration_name(iterations=iterations)))
                 
         return var_name
         
@@ -441,10 +493,123 @@ class SPSSObject_Dataframe(mrDataFileDsc):
             s = "{} - {}".format(s, self.get_iteration_label(iterations=iterations))
         return s
 
+    def to_excel_wide_to_long(self):
+        df = pd.DataFrame(data=self.df_spss, columns=self.varNames)
+        attributes = self.get_categories_list(self.MDM.Fields[self.group_name])
+
+
+
+        #Columns to use as id variable
+        self.id_vars = list()
+        self.value_groupnames = list()
+        self.groupname_labels = list()
+        
+        if self.group_name is not None:
+            self.value_groupnames.extend(self.get_categories_list(self.MDM.Fields[self.group_name]).keys())
+
+        
+
+
+        df_unpivot = pd.wide_to_long(df, stubnames=self.groupname_labels, i=self.id_vars, j='Rotation', sep="#", suffix="(({}))$".format("|".join([str(c) for c in self.value_groupnames])))
+
+        df_unpivot.reset_index(inplace=True)
+
+        writer = pd.ExcelWriter("output.xlsx", engine="xlsxwriter")
+
+        df_unpivot.to_excel(writer, sheet_name="Data 1")
+
+        writer.close()
+
     def to_spss(self):
-        with savReaderWriter.SavWriter(self.mdd_file.replace(".mdd", "_SPSS.sav"), varNames=self.varNames, missingValues=self.varMissingValues, varTypes=self.varTypes, formats=self.var_date_formats, varLabels=self.varLabels, measureLevels=self.measureLevels, valueLabels=self.valueLabels, ioUtf8=True) as writer:
-            for i, row in self.df_spss.iterrows():
-                for v in self.var_dates:    
+        
+        with savReaderWriter.SavWriter(self.mdd_file.replace(".mdd", "_SPSS.sav"), varNames=self.varNames, varTypes=self.varTypes, formats=self.var_date_formats, varLabels=self.varLabels, measureLevels=self.measureLevels, valueLabels=self.valueLabels, ioUtf8=True) as writer:
+            for i, row in tqdm(self.df_spss.iterrows(), desc="Insert data...") :
+                clean_row = []
+
+                for var in self.varNames:
+                    value = row.get(var)
+
+                    # Nếu là ngày thì xử lý như trước
+                    if var in self.var_dates and not pd.isnull(value):
+                        # Xử lý định dạng ngày
+                        if re.match(r'^\d{1,2}/\d{1,2}/\d{4}$', str(value)):
+                            fmt = '%m/%d/%Y'
+                        elif re.match(r'^\d{4}/\d{1,2}/\d{1,2}$', str(value)):
+                            fmt = '%Y/%m/%d'
+                        elif re.match(r'^\d{1,2}:\d{1,2}:\d{1,2}$', str(value)):
+                            fmt = '%H:%M:%S'
+                        elif re.match(r'^\d{1,2}:\d{1,2}$', str(value)):
+                            fmt = '%H:%M'
+                        else:
+                            fmt = None
+
+                        if fmt:
+                            try:
+                                d = datetime.strptime(str(value), fmt)
+                                value = writer.spssDateTime(d.strftime(fmt).encode('utf-8'), fmt)
+                            except:
+                                value = None
+
+                    # Chuẩn hóa giá trị:
+                    if pd.isnull(value):
+                        if self.varTypes[var] > 0:  # String
+                            value = ''
+                        else:  # Numeric
+                            value = None
+                    elif self.varTypes[var] > 0 and str(value).strip() == '':
+                        value = ''
+
+                    clean_row.append(value)
+
+                writer.writerow(clean_row)
+    
+    def to_spss_wide_to_long(self):
+        df = pd.DataFrame(data=self.records, columns=self.varNames)
+
+        df_unpivot = pd.wide_to_long(df, stubnames=self.groupname_labels, i=self.id_vars, j='Rotation', sep="#", suffix="(({}))$".format("|".join([str(c) for c in self.value_groupnames])))
+        df_unpivot.reset_index(inplace=True)
+        
+        var_names_unpivot = list()
+        var_types_unpivot = dict()
+        formats_unpivot = dict()
+        var_labels_unpivot = dict()
+        measure_levels_unpivot = dict()
+        value_labels_unpivot = dict()
+        var_dates_unpivot = list()
+
+        for c in list(df_unpivot.columns):
+            if c == "Rotation":
+                var_names_unpivot.append(c)
+                var_types_unpivot[c] = 10
+            else:
+                for v in self.varNames:
+                    variable = re.sub(pattern="(#({}))$".format("|".join([str(i) for i in self.value_groupnames])), repl="", string=v)
+                    
+                    if c == variable and variable not in var_names_unpivot:
+                        var_names_unpivot.append(variable)
+                        
+                        var_type_value = self.varTypes[v]
+
+                        if isinstance(var_type_value, int):  # Ensure string width is correct
+                            var_types_unpivot[variable] = max(var_type_value, 0)  # Ensure no negative values
+                        else:
+                            var_types_unpivot[variable] = 0  # Default to numeric type if unexpected type
+                            
+                        if v in self.var_date_formats.keys():
+                            formats_unpivot[variable] = self.var_date_formats[v]
+                        if v in self.varLabels.keys():
+                            var_labels_unpivot[variable] = self.varLabels[v]
+                        if v in self.measureLevels.keys():
+                            measure_levels_unpivot[variable] = self.measureLevels[v]
+                        if v in self.valueLabels.keys():
+                            value_labels_unpivot[variable] = self.valueLabels[v]
+                        if v in self.var_dates:
+                            var_dates_unpivot.append(c)
+                        break
+        
+        with savReaderWriter.SavWriter(self.mdd_file.replace(".mdd", "unpivot.sav"), varNames=var_names_unpivot, varTypes=var_types_unpivot, formats=formats_unpivot, varLabels=var_labels_unpivot, measureLevels=measure_levels_unpivot, valueLabels=value_labels_unpivot, ioUtf8=True) as writer:
+            for i, row in df_unpivot.iterrows():
+                for v in var_dates_unpivot:
                     if re.match(pattern="(.*)DATE(.*)", string=v):
                         try:
                             d = datetime.strptime(row[v], "%m/%d/%Y")
@@ -455,8 +620,8 @@ class SPSSObject_Dataframe(mrDataFileDsc):
                     if re.match(pattern="(.*)TIME(.*)", string=v):
                         try:
                             d = datetime.strptime(row[v], "%H:%M:%S")
-                            row[v] = writer.convertTime(d.day, d.hour, d.minute, d.second)
+                            row[v] = writer.convertTime(0, d.hour, d.minute, d.second)
                         except:
                             row[v] = np.nan
 
-                writer.writerow(list(row))
+                writer.writerow([None if pd.isnull(d) else str(d) if not str(d).isnumeric() else str(float(d)) for d in row])
