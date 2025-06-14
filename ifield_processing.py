@@ -20,7 +20,7 @@ collections.Mapping = collections.abc.Mapping
 collections.MutableSet = collections.abc.MutableSet
 collections.MutableMapping = collections.abc.MutableMapping
 
-project_name = "VNXXXXXXX_TEMPLATE"
+project_name = "VN2025035_YODA_9_TRACKER"
 
 os.chdir("projects\\{}".format(project_name))
 
@@ -256,60 +256,72 @@ try:
                         
                         c = list()
                         v = list()
-
-                        for key, question in isurvey["questions"].items():
-                            if question["attributes"]["objectName"] in ["ID"]:
-                                if row.name == 1609219:
-                                    a = ""
-
-                            if question["datatype"] not in [dataTypeConstants.mtNone, dataTypeConstants.mtLevel]:
-                                for i in range(len(question["columns"])):
-                                    for mdd_col, csv_obj in question["columns"][i].items():
-
-                                        if csv_obj["csv"][0] not in config["respondent_information_columns_removed"]:
-                                            if (question["datatype"].value == dataTypeConstants.mtCategorical.value) or (question["datatype"].value == dataTypeConstants.mtObject.value and csv_obj["datatype"].value == dataTypeConstants.mtCategorical.value):
-                                                if question["answers"]["attributes"]["answerSetID"] != "8" and question["answers"]["attributes"]["answerSetID"] != "-1":
-                                                    if bool(int(question["answers"]["answerref"]["attributes"]["isMultipleSelection"])):
-                                                        if row[csv_obj["csv"]].sum() > 0:
-                                                            c.append(mdd_col)
-                                                            v.append("{%s}" % (",".join([k.split(".")[-1] for k, v in dict(row[csv_obj["csv"]]).items() if v == 1])))
-                                                    else:
-                                                        if not pd.isnull(row[csv_obj["csv"][0]]): 
-                                                            c.append(mdd_col)
-                                                            v.append("{%s}" % (question["answers"]["options"][str(int(row[csv_obj["csv"][0]]))]["objectname"]))
-                                                
-                                                    for mdd_other_col, csv_other_obj in csv_obj["others"].items():
-
-                                                        if not pd.isnull(row[csv_other_obj["csv"][0]]):
-                                                            c.append(mdd_other_col)
-
-                                                            match int(csv_other_obj["datatype"]):
-                                                                case 2:
-                                                                    v.append("{}".format(row[csv_other_obj["csv"][0]]))
-                                                                case 3:
-                                                                    v.append("'{}'".format(". ".join(re.split('\n|\r', re.sub(pattern='[\']', repl="''", string=str(row[csv_other_obj["csv"][0]]))))))
-                                                                case 4:
-                                                                    v.append("'{}'".format(row[csv_other_obj["csv"][0]]))
-                                            else:
-                                                if not pd.isnull(row[csv_obj["csv"][0]]):
-                                                    match question["datatype"].value:
-                                                        case dataTypeConstants.mtText.value:
-                                                            c.append(mdd_col)
-                                                            v.append("'{}'".format(". ".join(re.split('\n|\r', re.sub(pattern='[\']', repl="''", string=str(row[csv_obj["csv"][0]]))))))
-                                                        case dataTypeConstants.mtDate.value:
-                                                            c.append(mdd_col)
-                                                            v.append("'{}'".format(row[csv_obj["csv"][0]]))
-                                                        case dataTypeConstants.mtDouble.value:
-                                                            c.append(mdd_col)
-                                                            v.append("{}".format(row[csv_obj["csv"][0]]))
-                                                        case dataTypeConstants.mtObject.value:
-                                                            c.append(mdd_col)
-                                                            v.append("{}".format(row[csv_obj["csv"][0]]))
                         
-                        sql_update = "UPDATE VDATA SET " + ','.join([cx + str(r" = %s") for cx in c]) % tuple(v) + " WHERE InstanceID = {}".format(row.name)
-                        adoConn.Execute(sql_update)
+                        try:
+                            for key, question in isurvey["questions"].items():
+                                if question["attributes"]["objectName"] in ["ID"]:
+                                    if row.name == 1609219:
+                                        a = ""
 
-                        shell_chain_ids.append(row["SHELL_CHAINID"])
+                                if question["datatype"] not in [dataTypeConstants.mtNone, dataTypeConstants.mtLevel]:
+                                    for i in range(len(question["columns"])):
+                                        for mdd_col, csv_obj in question["columns"][i].items():
+                                            
+                                            if "UBAW1" in mdd_col:
+                                                a = ""
+
+                                            if len(csv_obj["csv"]) > 0:
+                                                if csv_obj["csv"][0] not in config["respondent_information_columns_removed"]:
+                                                    if (question["datatype"].value == dataTypeConstants.mtCategorical.value) or (question["datatype"].value == dataTypeConstants.mtObject.value and csv_obj["datatype"].value == dataTypeConstants.mtCategorical.value):
+                                                        if question["answers"]["attributes"]["answerSetID"] != "8" and question["answers"]["attributes"]["answerSetID"] != "-1":
+                                                            if bool(int(question["answers"]["answerref"]["attributes"]["isMultipleSelection"])):
+                                                                if row[csv_obj["csv"]].sum() > 0:
+                                                                    c.append(mdd_col)
+                                                                    v.append("{%s}" % (",".join([k.split(".")[-1] for k, v in dict(row[csv_obj["csv"]]).items() if v == 1])))
+                                                            else:
+                                                                if not pd.isnull(row[csv_obj["csv"][0]]): 
+                                                                    c.append(mdd_col)
+                                                                    v.append("{%s}" % (question["answers"]["options"][str(int(row[csv_obj["csv"][0]]))]["objectname"]))
+                                                        
+                                                            for mdd_other_col, csv_other_obj in csv_obj["others"].items():
+
+                                                                if not pd.isnull(row[csv_other_obj["csv"][0]]):
+                                                                    c.append(mdd_other_col)
+
+                                                                    match int(csv_other_obj["datatype"]):
+                                                                        case 2:
+                                                                            v.append("{}".format(row[csv_other_obj["csv"][0]]))
+                                                                        case 3:
+                                                                            v.append("'{}'".format(". ".join(re.split('\n|\r', re.sub(pattern='[\']', repl="''", string=str(row[csv_other_obj["csv"][0]]))))))
+                                                                        case 4:
+                                                                            v.append("'{}'".format(row[csv_other_obj["csv"][0]]))
+                                                    else:
+                                                        if not pd.isnull(row[csv_obj["csv"][0]]):
+                                                            match question["datatype"].value:
+                                                                case dataTypeConstants.mtText.value:
+                                                                    c.append(mdd_col)
+                                                                    v.append("'{}'".format(". ".join(re.split('\n|\r', re.sub(pattern='[\']', repl="''", string=str(row[csv_obj["csv"][0]]))))))
+                                                                case dataTypeConstants.mtDate.value:
+                                                                    c.append(mdd_col)
+                                                                    v.append("'{}'".format(row[csv_obj["csv"][0]]))
+                                                                case dataTypeConstants.mtDouble.value:
+                                                                    c.append(mdd_col)
+                                                                    v.append("{}".format(row[csv_obj["csv"][0]]))
+                                                                case dataTypeConstants.mtObject.value:
+                                                                    match csv_obj['datatype'].value:
+                                                                        case dataTypeConstants.mtText.value:
+                                                                            c.append(mdd_col)
+                                                                            v.append("'{}'".format(row[csv_obj["csv"][0]]))
+                                                                        case _:
+                                                                            c.append(mdd_col)
+                                                                            v.append("{}".format(row[csv_obj["csv"][0]]))
+                                
+                            sql_update = "UPDATE VDATA SET " + ','.join([cx + str(r" = %s") for cx in c]) % tuple(v) + " WHERE InstanceID = {}".format(row.name)
+                            adoConn.Execute(sql_update)
+
+                            shell_chain_ids.append(row["SHELL_CHAINID"])
+                        except Exception as error:
+                            raise Exception("Bug", "ID {} - {}".format(row.name, error.excepinfo[2]))
 
                     adoConn.Close()
 

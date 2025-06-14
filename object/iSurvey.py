@@ -119,7 +119,7 @@ class iQuestions(dict):
             elements = list(enumerate(body.findall('*')))
 
             for i, question in enumerate(body.findall('*')):
-                if question.attrib['pos'] == "111":
+                if question.attrib['pos'] == "258":
                     a = ""
 
                 if question.tag in ["sectionEnd", "loopEnd"]:
@@ -243,7 +243,8 @@ class iQuestion(dict):
                 self["comment_syntax"] = self.syntax_general()
                 
                 if self["answers"]["attributes"]["answerSetID"] != "8" and self["answers"]["attributes"]["answerSetID"] != "-1":
-                    self["syntax"] = self.syntax_categorical()
+                    if len(self["answers"]["answerref"]["options"]) > 0:
+                        self["syntax"] = self.syntax_categorical()
 
                 self["columns"] = self.get_columns()
                 
@@ -424,39 +425,40 @@ class iQuestion(dict):
             })
 
             if self["answers"]["attributes"]["answerSetID"] != "8" and self["answers"]["attributes"]["answerSetID"] != "-1":
-                if bool(int(self["answers"]["answerref"]["attributes"]["isMultipleSelection"])):
-                    for key, option in self["answers"]["options"].items():
-                        csv_col = "%s.%s" % (re.sub(pattern="(}\])", repl="]", string=re.sub(pattern="(\[{)", repl="[", string=mdd_col)), option["objectname"])
-                        
-                        if not bool(int(option["attributes"]["isDisplayAsHeader"])):
-                            columns[mdd_col]["csv"].append(csv_col)
-                        if bool(int(option["attributes"]["isOtherSpecify"])):
-                            mdd_other_col = "%s.%s" % (mdd_col, option["objectname"])
-                            csv_other_col = "%s.%s.%s" % (
-                                                re.sub(pattern="(}\])", repl="]", string=re.sub(pattern="(\[{)", repl="[", string=mdd_col)), 
-                                                option["objectname"], 
-                                                option["otherfield"]["objectName"])
-
-                            columns[mdd_col]["others"][mdd_other_col] = dict({
-                                "csv" : [csv_other_col],
-                                "datatype" : option["otherfield"]["datatype"]
-                            })
-                else:
-                    csv_col = re.sub(pattern="(}\])", repl="]", string=re.sub(pattern="(\[{)", repl="[", string=mdd_col))
-
-                    columns[mdd_col]["csv"].append(csv_col)
-                
-                    for key, option in self["answers"]["options"].items():
-                        if bool(int(option["attributes"]["isOtherSpecify"])):
-                            mdd_other_col = "%s.%s" % (mdd_col, option["objectname"])
-                            csv_other_col = "%s.%s" % (
-                                                re.sub(pattern="(}\])", repl="]", string=re.sub(pattern="(\[{)", repl="[", string=mdd_col)), 
-                                                option["otherfield"]["objectName"])
+                if len(self["answers"]["answerref"]["options"]) > 0:
+                    if bool(int(self["answers"]["answerref"]["attributes"]["isMultipleSelection"])):
+                        for key, option in self["answers"]["options"].items():
+                            csv_col = "%s.%s" % (re.sub(pattern="(}\])", repl="]", string=re.sub(pattern="(\[{)", repl="[", string=mdd_col)), option["objectname"])
                             
-                            columns[mdd_col]["others"][mdd_other_col] = dict({
-                                "csv" : [csv_other_col],
-                                "datatype" : option["otherfield"]["datatype"]
-                            })
+                            if not bool(int(option["attributes"]["isDisplayAsHeader"])):
+                                columns[mdd_col]["csv"].append(csv_col)
+                            if bool(int(option["attributes"]["isOtherSpecify"])):
+                                mdd_other_col = "%s.%s" % (mdd_col, option["objectname"])
+                                csv_other_col = "%s.%s.%s" % (
+                                                    re.sub(pattern="(}\])", repl="]", string=re.sub(pattern="(\[{)", repl="[", string=mdd_col)), 
+                                                    option["objectname"], 
+                                                    option["otherfield"]["objectName"])
+
+                                columns[mdd_col]["others"][mdd_other_col] = dict({
+                                    "csv" : [csv_other_col],
+                                    "datatype" : option["otherfield"]["datatype"]
+                                })
+                    else:
+                        csv_col = re.sub(pattern="(}\])", repl="]", string=re.sub(pattern="(\[{)", repl="[", string=mdd_col))
+
+                        columns[mdd_col]["csv"].append(csv_col)
+                    
+                        for key, option in self["answers"]["options"].items():
+                            if bool(int(option["attributes"]["isOtherSpecify"])):
+                                mdd_other_col = "%s.%s" % (mdd_col, option["objectname"])
+                                csv_other_col = "%s.%s" % (
+                                                    re.sub(pattern="(}\])", repl="]", string=re.sub(pattern="(\[{)", repl="[", string=mdd_col)), 
+                                                    option["otherfield"]["objectName"])
+                                
+                                columns[mdd_col]["others"][mdd_other_col] = dict({
+                                    "csv" : [csv_other_col],
+                                    "datatype" : option["otherfield"]["datatype"]
+                                })
             
             if (self["datatype"].value == dataTypeConstants.mtObject.value):
                 columns[f'{mdd_col}{self["comment"]["objectName"]}'] = dict({
@@ -543,11 +545,12 @@ class iAnswers(dict):
         self["answerref"] = answersref[self["attributes"]["answerSetID"]]
     
         if self["attributes"]["answerSetID"] != '8' and self["attributes"]["answerSetID"] != '-1':
-            self["options"] = iOptions(answers.find('options').findall('option'), self["answerref"], definesref) 
-            self["syntax"] = self.syntax()
+            if answers.find('options') is not None:
+                self["options"] = iOptions(answers.find('options').findall('option'), self["answerref"], definesref) 
+                self["syntax"] = self.syntax()
 
-            if all(['measure' in opt['attributes'].keys() for opt in self["options"].values()]):
-                self["axis_syntax"] = self.axis_syntax() 
+                if all(['measure' in opt['attributes'].keys() for opt in self["options"].values()]):
+                    self["axis_syntax"] = self.axis_syntax() 
 
     def axis_syntax(self, options=None):
         s = 'axis("{base(),%s, mean() [Decimals=2], stddev() [Decimals=2]}")' % (
