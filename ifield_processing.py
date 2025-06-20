@@ -515,4 +515,16 @@ except Exception as ex:
     print(repr(ex))
     #sys.exit(repr(error))
 
+#open current_mdd_file with xml file and find and replace with mdm_lastversion="6.0.1.1.46"
+if os.path.isfile(current_mdd_file):
+    with open(current_mdd_file, 'r', encoding='utf-8') as file:
+        content = file.read()
 
+    content = re.sub(
+        r'mdm_lastversion="(?!6\.\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})[^"]+"',
+        r'mdm_lastversion="6.0.1.1.46"',
+        content
+    )
+
+    with open(current_mdd_file, 'w', encoding='utf-8') as file:
+        file.write(content)
